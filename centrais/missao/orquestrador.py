@@ -44,7 +44,7 @@ PERFIL_DE_ENERGIA_POR_CENTRAL = {
     # bem mais de 60 de energia sozinha. Um alvo baixo demais força a central
     # a reduzir a quantidade extraída para caber no saldo, capturando só uma
     # fração do valor de cada jazida valiosa.
-    "extracao": {"limiar_minimo": 10.0, "alvo": 150},
+    "extracao": {"limiar_minimo": 10.0, "alvo": 250},
     "transporte": {"limiar_minimo": 10.0, "alvo": 40},
     "pesquisa": {"limiar_minimo": 10.0, "alvo": 35},
     "armazenagem": {"limiar_minimo": 10.0, "alvo": 25},

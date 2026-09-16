@@ -5,7 +5,7 @@ from typing import Any
 from centrais.comum.minerais import custo_extracao, e_valioso, valor_por_unidade
 
 CENTRAL = "extracao"
-MARGEM_DE_SEGURANCA = 2.0
+MARGEM_DE_SEGURANCA = 0.5
 
 FATOR_DESPERDICIO_POR_MODO = {"cuidadoso": 1.0, "normal": 1.2, "agressivo": 1.4}
 MULT_ENERGIA_POR_MODO = {"cuidadoso": 1.8, "normal": 1.0, "agressivo": 0.45}
@@ -15,7 +15,7 @@ EXPOENTE_DE_ESCASSEZ = 2.0
 SENSIBILIDADE_AO_DESGASTE = 0.65
 # Cobre qualquer imprecisao na fracao restante estimada (nao sabemos a
 # quantidade original exata da jazida antes da primeira observacao).
-MARGEM_DE_SEGURANCA_DO_CUSTO = 1.15
+MARGEM_DE_SEGURANCA_DO_CUSTO = 1.0
 
 
 def criar_contexto() -> dict:
