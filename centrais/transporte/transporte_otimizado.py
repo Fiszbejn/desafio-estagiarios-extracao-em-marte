@@ -60,14 +60,23 @@ def _despachar(cliente: Any, contexto: dict, identificador_da_carga: str) -> Non
         return
 
     saldo = cliente.consultar_estado()["energia"].get(CENTRAL, 0.0)
-    if saldo < rota["custo_energia_base"] + MARGEM_DE_SEGURANCA:
+    # "rapido" tem mult_energia 1.05 (vs 0.85 do "economico") mas mult_duracao
+    # 0.5 e mult_degradacao 0.5 (vs 2.0 e 2.5): a diferenca de energia e
+    # pequena, a diferenca de qualidade entregue e enorme. Sempre priorizar
+    # rapido; so cair para modos mais baratos se a energia realmente nao
+    # cobrir a viagem.
+    modo = "rapido"
+    custo_estimado = rota["custo_energia_base"] * 1.05
+    if saldo < custo_estimado + MARGEM_DE_SEGURANCA:
+        modo = "normal"
+        custo_estimado = rota["custo_energia_base"]
+    if saldo < custo_estimado + MARGEM_DE_SEGURANCA:
         return
 
     autorizacao = _autorizar(cliente, "iniciar_viagem")
     if autorizacao is None:
         return
 
-    modo = "rapido" if e_valioso(carga["mineral"]) else "economico"
     cliente.chamar(
         "POST",
         "/transporte/iniciar-viagem",
