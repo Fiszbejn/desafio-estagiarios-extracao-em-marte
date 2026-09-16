@@ -2,17 +2,24 @@ from __future__ import annotations
 
 from typing import Any
 
-from centrais.comum.minerais import e_valioso, valor_por_unidade
+from centrais.comum.minerais import custo_extracao, e_valioso, valor_por_unidade
 
 CENTRAL = "extracao"
 MARGEM_DE_SEGURANCA = 2.0
 
-CUSTO_ESTIMADO_POR_TIPO = {"leve": 6.0, "precisa": 9.0}
 FATOR_DESPERDICIO_POR_MODO = {"cuidadoso": 1.0, "normal": 1.2, "agressivo": 1.4}
+MULT_ENERGIA_POR_MODO = {"cuidadoso": 1.8, "normal": 1.0, "agressivo": 0.45}
+AJUSTE_ENERGIA_POR_PERFIL = {"superficial": 0.9, "profunda": 1.25, "mapeadora": 1.1}
+FATOR_BASE_DE_ENERGIA = 0.2
+EXPOENTE_DE_ESCASSEZ = 2.0
+SENSIBILIDADE_AO_DESGASTE = 0.65
+# Cobre qualquer imprecisao na fracao restante estimada (nao sabemos a
+# quantidade original exata da jazida antes da primeira observacao).
+MARGEM_DE_SEGURANCA_DO_CUSTO = 1.15
 
 
 def criar_contexto() -> dict:
-    return {"unidades_ocupadas": set()}
+    return {"quantidade_original_por_jazida": {}}
 
 
 def _parametros_de_extracao(mineral: str) -> dict:
@@ -21,12 +28,51 @@ def _parametros_de_extracao(mineral: str) -> dict:
     return {"tipo_preferido": "leve", "modo": "agressivo", "perfil_de_escavacao": "superficial"}
 
 
+def _custo_por_unidade(contexto: dict, jazida: dict, unidade: dict, modo: str, perfil: str) -> float:
+    """Aproxima o custo real por unidade de `mundo/api/extracao.py::iniciar_extracao`.
+
+    Sem essa conta, o pre-check antigo (um valor fixo por tipo de mineradora)
+    subestimava violentamente o custo de minerais caros/raros (custo_extracao
+    de ate 8.0, contra 1.0 da hematita) e ignorava o desgaste acumulado da
+    unidade (fator_de_desgaste cresce sem teto com o uso) — a central
+    despachava extracoes que o motor sempre rejeitava por falta de energia, e
+    cada rejeicao disparava uma realocacao da Missao (ver
+    `missao/orquestrador.py::reagir_a_central_dormente`) que esvaziava a
+    reserva estrategica em poucas dezenas de ciclos. O custo real e linear em
+    quantidade, entao devolver o custo por unidade permite escalar a
+    quantidade pedida para caber no saldo disponivel em vez de so desistir da
+    jazida inteira.
+    """
+    originais = contexto["quantidade_original_por_jazida"]
+    identificador = jazida["identificador"]
+    if identificador not in originais:
+        originais[identificador] = jazida["quantidade_disponivel"]
+    fracao_restante = min(1.0, jazida["quantidade_disponivel"] / originais[identificador])
+    fator_de_escassez = 1.0 if fracao_restante <= 0.0 else fracao_restante**-EXPOENTE_DE_ESCASSEZ
+    fator_de_desgaste = 1.0 + max(0.0, unidade["desgaste"]) * SENSIBILIDADE_AO_DESGASTE
+    custo_por_unidade = (
+        custo_extracao(jazida["mineral"])
+        * FATOR_BASE_DE_ENERGIA
+        * MULT_ENERGIA_POR_MODO[modo]
+        * AJUSTE_ENERGIA_POR_PERFIL[perfil]
+        * fator_de_escassez
+        * fator_de_desgaste
+    )
+    return custo_por_unidade * MARGEM_DE_SEGURANCA_DO_CUSTO
+
+
 def passo(cliente: Any, estado: dict, eventos: list[dict], contexto: dict) -> None:
+    # Nao ha necessidade de lembrar unidades ocupadas entre ciclos: o estado
+    # real de "/extracao/mineradoras" ja reflete no ciclo seguinte qualquer
+    # comando processado (sucesso ou nao). Guardar isso localmente e o que
+    # travava a central pra sempre quando um comando era rejeitado como
+    # operacao_invalida (nenhum evento de conclusao chega pra liberar a
+    # unidade "ocupada" que nunca foi de fato ocupada pelo motor).
     for evento in eventos:
         if evento["tipo"] in ("extracao_concluida", "extracao_interrompida"):
-            unidade = evento["dados"]["unidade"]
-            contexto["unidades_ocupadas"].discard(unidade)
-            cliente.chamar("POST", "/extracao/retornar-unidade", {"identificador_da_unidade": unidade})
+            cliente.chamar(
+                "POST", "/extracao/retornar-unidade", {"identificador_da_unidade": evento["dados"]["unidade"]}
+            )
 
     saldo = estado["energia"].get(CENTRAL, 0.0)
     if saldo <= 0.0:
@@ -39,10 +85,7 @@ def passo(cliente: Any, estado: dict, eventos: list[dict], contexto: dict) -> No
     disponiveis.sort(key=lambda j: valor_por_unidade(j["mineral"]), reverse=True)
 
     mineradoras = cliente.chamar("GET", "/extracao/mineradoras")
-    unidades_livres = [
-        m for m in mineradoras
-        if m["estado"] == "disponivel" and m["identificador"] not in contexto["unidades_ocupadas"]
-    ]
+    unidades_livres = [m for m in mineradoras if m["estado"] == "disponivel"]
 
     for jazida in disponiveis:
         if not unidades_livres:
@@ -52,13 +95,25 @@ def passo(cliente: Any, estado: dict, eventos: list[dict], contexto: dict) -> No
             (u for u in unidades_livres if u["tipo"] == parametros["tipo_preferido"]),
             unidades_livres[0],
         )
-        custo_estimado = CUSTO_ESTIMADO_POR_TIPO.get(unidade["tipo"], 9.0)
-        if saldo < custo_estimado + MARGEM_DE_SEGURANCA:
-            continue
         fator_desperdicio = FATOR_DESPERDICIO_POR_MODO[parametros["modo"]]
         quantidade = min(unidade["capacidade"], jazida["quantidade_disponivel"] / fator_desperdicio)
         if quantidade <= 0:
             continue
+        custo_por_unidade = _custo_por_unidade(
+            contexto, jazida, unidade, parametros["modo"], parametros["perfil_de_escavacao"]
+        )
+        # Em vez de desistir da jazida inteira quando a quantidade cheia nao
+        # cabe no saldo, reduz a quantidade ao maximo afordavel — o custo e
+        # linear em quantidade, entao um pedido menor sempre cabe se sobrar
+        # qualquer saldo utilizavel. Isso evita deixar uma unidade descansada
+        # ociosa so porque a jazida mais valiosa disponivel ficou cara demais
+        # para a capacidade cheia.
+        orcamento_disponivel = saldo - MARGEM_DE_SEGURANCA
+        if custo_por_unidade > 0 and quantidade * custo_por_unidade > orcamento_disponivel:
+            quantidade = orcamento_disponivel / custo_por_unidade
+        if quantidade < 1.0:
+            continue
+        custo_estimado = quantidade * custo_por_unidade
         cliente.chamar(
             "POST",
             "/extracao/iniciar-extracao",
@@ -70,7 +125,6 @@ def passo(cliente: Any, estado: dict, eventos: list[dict], contexto: dict) -> No
                 "perfil_de_escavacao": parametros["perfil_de_escavacao"],
             },
         )
-        contexto["unidades_ocupadas"].add(unidade["identificador"])
         unidades_livres.remove(unidade)
         saldo -= custo_estimado
 

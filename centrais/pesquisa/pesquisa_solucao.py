@@ -13,7 +13,6 @@ def criar_contexto() -> dict:
     return {
         "fila": [],
         "mineral_por_carga": {},
-        "em_analise": None,
         "aprovadas_pendentes": set(),
     }
 
@@ -71,8 +70,6 @@ def passo(cliente: Any, estado: dict, eventos: list[dict], contexto: dict) -> No
                     contexto["fila"].append(identificador)
         elif tipo == "analise_concluida":
             identificador = dados["carga"]
-            if identificador == contexto["em_analise"]:
-                contexto["em_analise"] = None
             mineral = contexto["mineral_por_carga"].get(identificador, "")
             cliente.chamar(
                 "POST",
@@ -88,7 +85,11 @@ def passo(cliente: Any, estado: dict, eventos: list[dict], contexto: dict) -> No
                 if identificador in contexto["aprovadas_pendentes"]:
                     _tentar_distribuir(cliente, contexto, identificador)
 
-    if contexto["em_analise"] is None and contexto["fila"] and not cliente.chamar("GET", "/pesquisa/em-andamento"):
+    # A fonte de verdade de slot livre e sempre a API ao vivo, nunca uma
+    # flag local: se um `iniciar-analise` for rejeitado (operacao_invalida),
+    # nenhum `analise_concluida` chega pra liberar uma flag local, o que
+    # travaria a fila pra sempre (unico slot compartilhado da central).
+    if contexto["fila"] and not cliente.chamar("GET", "/pesquisa/em-andamento"):
         contexto["fila"].sort(key=lambda i: e_valioso(contexto["mineral_por_carga"].get(i, "")), reverse=True)
         identificador = contexto["fila"].pop(0)
         mineral = contexto["mineral_por_carga"].get(identificador, "")
@@ -97,7 +98,6 @@ def passo(cliente: Any, estado: dict, eventos: list[dict], contexto: dict) -> No
             "/pesquisa/iniciar-analise",
             {"identificador_da_carga": identificador, "tipo_de_analise": _tipo_de_analise(mineral)},
         )
-        contexto["em_analise"] = identificador
 
 
 def executar(cliente: Any, limite_de_ciclos: int) -> None:
