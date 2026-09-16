@@ -24,7 +24,10 @@
 **Files:**
 - Create: `centrais/comum/minerais.py`
 - Create: `centrais/testes/__init__.py`
-- Modify: `pyproject.toml` (adicionar `"centrais/testes"` a `testpaths`)
+
+`pyproject.toml` é protegido pelo manifesto de integridade (`ARQUIVOS_NA_RAIZ`
+em `integridade/manifesto.py`) — não editar. Rodar os testes apontando o
+caminho direto: `pytest centrais/testes -v`.
 
 **Interfaces:**
 - Produces: `centrais.comum.minerais.valor_por_unidade(mineral: str) -> float`, `centrais.comum.minerais.raridade(mineral: str) -> float`, `centrais.comum.minerais.e_valioso(mineral: str) -> bool`
@@ -94,31 +97,17 @@ def e_valioso(mineral: str) -> bool:
     return raridade(mineral) >= LIMIAR_DE_RARIDADE_PARA_PRESERVACAO
 ```
 
-- [ ] **Step 5: Adicionar `centrais/testes` a `testpaths` em `pyproject.toml`**
+- [ ] **Step 5: Criar `centrais/testes/__init__.py` vazio**
 
-Trocar:
-
-```toml
-testpaths = ["mundo/testes", "avaliador/testes", "integridade/testes"]
-```
-
-por:
-
-```toml
-testpaths = ["mundo/testes", "avaliador/testes", "integridade/testes", "centrais/testes"]
-```
-
-- [ ] **Step 6: Criar `centrais/testes/__init__.py` vazio**
-
-- [ ] **Step 7: Rodar o teste e confirmar que passa**
+- [ ] **Step 6: Rodar o teste e confirmar que passa**
 
 Run: `.venv/Scripts/python.exe -m pytest centrais/testes/test_minerais.py -v`
 Expected: 3 passed
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add centrais/comum/minerais.py centrais/testes/__init__.py centrais/testes/test_minerais.py pyproject.toml
+git add centrais/comum/minerais.py centrais/testes/__init__.py centrais/testes/test_minerais.py
 git commit -m "feat: adiciona catalogo comum de minerais para as centrais"
 ```
 
