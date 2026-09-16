@@ -8,6 +8,10 @@ real. Por isso a lógica não fala HTTP diretamente: recebe `cliente` e só usa
 essa interface, funcionando tanto in-process (avaliador) quanto contra um
 servidor real via `ClienteHttpLocal` (uso manual, ver `__main__`).
 
+`passo` é chamado uma vez por ciclo pelo loop único em
+`centrais/avaliacao.py` (junto com o passo das outras quatro centrais),
+nunca mais possuindo seu próprio loop/`avancar_ciclo` fora do modo manual.
+
 Responsabilidades resolvidas até aqui:
 1. Nunca deixar o saldo de energia da própria Missão chegar a zero — ela é
    a única central irrecuperável do mundo: se dormir, para de alocar
@@ -30,16 +34,15 @@ import httpx
 
 URL_BASE = "http://localhost:8000"
 INTERVALO_DE_VERIFICACAO_SEGUNDOS = 1.0
-INTERVALO_DE_CICLOS_ENTRE_VERIFICACOES = 10
 
 LIMIAR_DE_SEGURANCA_DA_MISSAO = 5.0
 QUANTIDADE_DE_REPOSICAO_DA_MISSAO = 20
 
 PERFIL_DE_ENERGIA_POR_CENTRAL = {
-    "extracao": {"limiar_minimo": 10.0, "alvo": 40},
-    "transporte": {"limiar_minimo": 10.0, "alvo": 25},
-    "pesquisa": {"limiar_minimo": 10.0, "alvo": 25},
-    "armazenagem": {"limiar_minimo": 10.0, "alvo": 20},
+    "extracao": {"limiar_minimo": 10.0, "alvo": 60},
+    "transporte": {"limiar_minimo": 10.0, "alvo": 40},
+    "pesquisa": {"limiar_minimo": 10.0, "alvo": 35},
+    "armazenagem": {"limiar_minimo": 10.0, "alvo": 25},
 }
 
 
@@ -93,7 +96,7 @@ def distribuir_energia_operacional(cliente: Any, energia: dict) -> None:
     """Mantém as centrais operacionais acima do piso mínimo do seu perfil de custo."""
     for central, perfil in PERFIL_DE_ENERGIA_POR_CENTRAL.items():
         saldo_atual = energia[central]
-        if saldo_atual < perfil["limiar_minimo"]:
+        if saldo_atual <= perfil["limiar_minimo"]:
             quantidade_a_repor = math.ceil(perfil["alvo"] - saldo_atual)
             if quantidade_a_repor > 0:
                 alocar_energia(cliente, central, quantidade_a_repor)
@@ -110,46 +113,35 @@ def reagir_a_central_dormente(cliente: Any, evento: dict) -> None:
         alocar_energia(cliente, "missao", QUANTIDADE_DE_REPOSICAO_DA_MISSAO)
 
 
-def monitorar_eventos(cliente: Any, desde_ciclo: int) -> int:
-    """Consome eventos novos do barramento e reage a falhas por falta de energia.
-
-    Retorna o próximo cursor de ciclo a usar na consulta seguinte.
-    """
-    eventos = cliente.consultar_eventos(desde_ciclo)
-    ultimo_ciclo = desde_ciclo
-    for evento in eventos:
-        if evento["tipo"] == "operacao_invalida":
-            reagir_a_central_dormente(cliente, evento)
-        ultimo_ciclo = max(ultimo_ciclo, evento["ciclo"])
-    return ultimo_ciclo
+def criar_contexto() -> dict:
+    return {}
 
 
-def executar_ciclo_de_gestao_de_energia(cliente: Any, desde_ciclo: int) -> int:
-    estado = cliente.consultar_estado()
+def passo(cliente: Any, estado: dict, eventos: list[dict], contexto: dict) -> None:
     energia = estado["energia"]
     proteger_energia_da_missao(cliente, energia)
     distribuir_energia_operacional(cliente, energia)
-    return monitorar_eventos(cliente, desde_ciclo)
+    for evento in eventos:
+        if evento["tipo"] == "operacao_invalida":
+            reagir_a_central_dormente(cliente, evento)
 
 
 def executar(cliente: Any, limite_de_ciclos: int) -> None:
-    """Ponto de entrada compatível com o contrato do avaliador.
+    """Ponto de entrada só para rodar esta central sozinha, manualmente.
 
-    Checa e realoca a cada `INTERVALO_DE_CICLOS_ENTRE_VERIFICACOES` ciclos, e
-    não a cada ciclo: consumo passivo é de 0.05/ciclo e os limiares têm
-    margem de sobra pra isso, mas consultar+alocar em toda chamada de
-    `avancar_ciclo` explode o número de chamadas em rodadas de milhares de
-    ciclos (o avaliador roda 100-200 seeds).
+    No avaliador, `passo` é chamado direto pelo loop único de
+    `centrais/avaliacao.py`, junto com o passo das outras quatro centrais.
     """
+    contexto = criar_contexto()
     desde_ciclo = 0
-    ciclos_restantes = limite_de_ciclos
-    while ciclos_restantes > 0:
+    for _ in range(limite_de_ciclos):
         if cliente.simulacao_encerrada():
             return
-        desde_ciclo = executar_ciclo_de_gestao_de_energia(cliente, desde_ciclo)
-        passo = min(INTERVALO_DE_CICLOS_ENTRE_VERIFICACOES, ciclos_restantes)
-        cliente.avancar_ciclo(passo)
-        ciclos_restantes -= passo
+        eventos = cliente.consultar_eventos(desde_ciclo)
+        estado = cliente.consultar_estado()
+        desde_ciclo = estado["ciclo_atual"] + 1
+        passo(cliente, estado, eventos, contexto)
+        cliente.avancar_ciclo()
 
 
 if __name__ == "__main__":
