@@ -23,8 +23,15 @@ def criar_contexto() -> dict:
 
 
 def _parametros_de_extracao(mineral: str) -> dict:
+    # `perfil_de_escavacao` sempre "superficial": em `mundo/api/extracao.py`
+    # a qualidade final e `min(100, qualidade_do_modo + bonus_do_perfil)`.
+    # "cuidadoso" ja entrega exatamente 100 (o teto), entao o bonus de
+    # "profunda"/"mapeadora" e sempre descartado pelo min() — so paga mais
+    # energia (1.25x/1.1x contra 0.9x) sem ganhar nada. Em "agressivo" o
+    # ganho de qualidade desses perfis (+2 a +4 sobre 78) tambem nao cobre
+    # o custo extra.
     if e_valioso(mineral):
-        return {"tipo_preferido": "precisa", "modo": "cuidadoso", "perfil_de_escavacao": "profunda"}
+        return {"tipo_preferido": "precisa", "modo": "cuidadoso", "perfil_de_escavacao": "superficial"}
     return {"tipo_preferido": "leve", "modo": "agressivo", "perfil_de_escavacao": "superficial"}
 
 
