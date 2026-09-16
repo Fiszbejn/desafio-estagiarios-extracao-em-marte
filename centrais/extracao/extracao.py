@@ -60,6 +60,13 @@ def _atratividade(contexto: dict, jazida: dict) -> float:
     conforme a jazida esvazia, alternando para a opção mais fresca do mesmo
     minério — ou até migrando para um minério mais barato quando a jazida
     valiosa já não compensa mais.
+
+    Importante: NÃO ponderar por custo de energia da extração aqui. O
+    gargalo real do pipeline é o slot único da Pesquisa (capacidade_paralela
+    = 1), não a energia de extração — testado e confirmado: priorizar por
+    "valor por energia gasta na extração" entope a Pesquisa com cargas
+    baratas e derruba o faturamento pela metade, porque cada slot de análise
+    ocupado por hematita é um slot que não processou cristal.
     """
     fracao_restante = _fracao_restante(contexto, jazida)
     return valor_por_unidade(jazida["mineral"]) * (fracao_restante**EXPOENTE_DE_ESCASSEZ)
