@@ -35,6 +35,36 @@ def _parametros_de_extracao(mineral: str) -> dict:
     return {"tipo_preferido": "leve", "modo": "agressivo", "perfil_de_escavacao": "superficial"}
 
 
+def _fracao_restante(contexto: dict, jazida: dict) -> float:
+    """Estima quanto sobra da jazida desde a primeira vez que a vimos.
+
+    A API nunca expõe a quantidade original (só a atual), então usamos a
+    primeira observação como aproximação — como só nós extraímos, é exata
+    a partir do primeiro `passo()` depois do reset do mundo.
+    """
+    originais = contexto["quantidade_original_por_jazida"]
+    identificador = jazida["identificador"]
+    if identificador not in originais:
+        originais[identificador] = jazida["quantidade_disponivel"]
+    return min(1.0, jazida["quantidade_disponivel"] / originais[identificador])
+
+
+def _atratividade(contexto: dict, jazida: dict) -> float:
+    """Prioriza por valor esperado, não só valor de tabela do mineral.
+
+    Cada mineral tem duas jazidas (`mundo/motor/motor_de_simulacao.py::_gerar_mundo_inicial`).
+    Ordenar só por `valor_por_unidade` faz a central esgotar uma jazida
+    inteira (pagando escassez crescente — o custo cresce com o quadrado do
+    inverso da fração restante) antes de tocar na irmã, ainda intacta e mais
+    barata. Ponderar pela fração restante ao quadrado faz a prioridade cair
+    conforme a jazida esvazia, alternando para a opção mais fresca do mesmo
+    minério — ou até migrando para um minério mais barato quando a jazida
+    valiosa já não compensa mais.
+    """
+    fracao_restante = _fracao_restante(contexto, jazida)
+    return valor_por_unidade(jazida["mineral"]) * (fracao_restante**EXPOENTE_DE_ESCASSEZ)
+
+
 def _custo_por_unidade(contexto: dict, jazida: dict, unidade: dict, modo: str, perfil: str) -> float:
     """Aproxima o custo real por unidade de `mundo/api/extracao.py::iniciar_extracao`.
 
@@ -50,11 +80,7 @@ def _custo_por_unidade(contexto: dict, jazida: dict, unidade: dict, modo: str, p
     quantidade pedida para caber no saldo disponivel em vez de so desistir da
     jazida inteira.
     """
-    originais = contexto["quantidade_original_por_jazida"]
-    identificador = jazida["identificador"]
-    if identificador not in originais:
-        originais[identificador] = jazida["quantidade_disponivel"]
-    fracao_restante = min(1.0, jazida["quantidade_disponivel"] / originais[identificador])
+    fracao_restante = _fracao_restante(contexto, jazida)
     fator_de_escassez = 1.0 if fracao_restante <= 0.0 else fracao_restante**-EXPOENTE_DE_ESCASSEZ
     fator_de_desgaste = 1.0 + max(0.0, unidade["desgaste"]) * SENSIBILIDADE_AO_DESGASTE
     custo_por_unidade = (
@@ -89,7 +115,7 @@ def passo(cliente: Any, estado: dict, eventos: list[dict], contexto: dict) -> No
     disponiveis = [j for j in jazidas if j["estado"] == "disponivel" and j["quantidade_disponivel"] > 0]
     if not disponiveis:
         return
-    disponiveis.sort(key=lambda j: valor_por_unidade(j["mineral"]), reverse=True)
+    disponiveis.sort(key=lambda j: _atratividade(contexto, j), reverse=True)
 
     mineradoras = cliente.chamar("GET", "/extracao/mineradoras")
     unidades_livres = [m for m in mineradoras if m["estado"] == "disponivel"]
