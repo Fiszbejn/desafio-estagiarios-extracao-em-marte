@@ -13,8 +13,6 @@ AJUSTE_ENERGIA_POR_PERFIL = {"superficial": 0.9, "profunda": 1.25, "mapeadora": 
 FATOR_BASE_DE_ENERGIA = 0.2
 EXPOENTE_DE_ESCASSEZ = 2.0
 SENSIBILIDADE_AO_DESGASTE = 0.65
-# Cobre qualquer imprecisao na fracao restante estimada (nao sabemos a
-# quantidade original exata da jazida antes da primeira observacao).
 MARGEM_DE_SEGURANCA_DO_CUSTO = 1.0
 
 
@@ -23,25 +21,17 @@ def criar_contexto() -> dict:
 
 
 def _parametros_de_extracao(mineral: str) -> dict:
-    # `perfil_de_escavacao` sempre "superficial": em `mundo/api/extracao.py`
-    # a qualidade final e `min(100, qualidade_do_modo + bonus_do_perfil)`.
-    # "cuidadoso" ja entrega exatamente 100 (o teto), entao o bonus de
-    # "profunda"/"mapeadora" e sempre descartado pelo min() — so paga mais
-    # energia (1.25x/1.1x contra 0.9x) sem ganhar nada. Em "agressivo" o
-    # ganho de qualidade desses perfis (+2 a +4 sobre 78) tambem nao cobre
-    # o custo extra.
+    # "superficial" sempre: qualidade final e min(100, qualidade_do_modo +
+    # bonus_do_perfil), e "cuidadoso" ja satura em 100, entao o bonus de
+    # perfis mais caros nunca se realiza.
     if e_valioso(mineral):
         return {"tipo_preferido": "precisa", "modo": "cuidadoso", "perfil_de_escavacao": "superficial"}
     return {"tipo_preferido": "leve", "modo": "agressivo", "perfil_de_escavacao": "superficial"}
 
 
 def _fracao_restante(contexto: dict, jazida: dict) -> float:
-    """Estima quanto sobra da jazida desde a primeira vez que a vimos.
-
-    A API nunca expõe a quantidade original (só a atual), então usamos a
-    primeira observação como aproximação — como só nós extraímos, é exata
-    a partir do primeiro `passo()` depois do reset do mundo.
-    """
+    # A API nao expoe a quantidade original da jazida; usa a primeira
+    # observacao como aproximacao.
     originais = contexto["quantidade_original_por_jazida"]
     identificador = jazida["identificador"]
     if identificador not in originais:
@@ -50,43 +40,15 @@ def _fracao_restante(contexto: dict, jazida: dict) -> float:
 
 
 def _atratividade(contexto: dict, jazida: dict) -> float:
-    """Prioriza por valor esperado, não só valor de tabela do mineral.
-
-    Cada mineral tem duas jazidas (`mundo/motor/motor_de_simulacao.py::_gerar_mundo_inicial`).
-    Ordenar só por `valor_por_unidade` faz a central esgotar uma jazida
-    inteira (pagando escassez crescente — o custo cresce com o quadrado do
-    inverso da fração restante) antes de tocar na irmã, ainda intacta e mais
-    barata. Ponderar pela fração restante ao quadrado faz a prioridade cair
-    conforme a jazida esvazia, alternando para a opção mais fresca do mesmo
-    minério — ou até migrando para um minério mais barato quando a jazida
-    valiosa já não compensa mais.
-
-    Importante: NÃO ponderar por custo de energia da extração aqui. O
-    gargalo real do pipeline é o slot único da Pesquisa (capacidade_paralela
-    = 1), não a energia de extração — testado e confirmado: priorizar por
-    "valor por energia gasta na extração" entope a Pesquisa com cargas
-    baratas e derruba o faturamento pela metade, porque cada slot de análise
-    ocupado por hematita é um slot que não processou cristal.
-    """
+    # Cada mineral tem duas jazidas; ponderar por valor x fracao_restante^2
+    # (em vez de só valor) evita esgotar uma inteira, pagando escassez
+    # crescente, antes de usar a irmã ainda intacta.
     fracao_restante = _fracao_restante(contexto, jazida)
     return valor_por_unidade(jazida["mineral"]) * (fracao_restante**EXPOENTE_DE_ESCASSEZ)
 
 
 def _custo_por_unidade(contexto: dict, jazida: dict, unidade: dict, modo: str, perfil: str) -> float:
-    """Aproxima o custo real por unidade de `mundo/api/extracao.py::iniciar_extracao`.
-
-    Sem essa conta, o pre-check antigo (um valor fixo por tipo de mineradora)
-    subestimava violentamente o custo de minerais caros/raros (custo_extracao
-    de ate 8.0, contra 1.0 da hematita) e ignorava o desgaste acumulado da
-    unidade (fator_de_desgaste cresce sem teto com o uso) — a central
-    despachava extracoes que o motor sempre rejeitava por falta de energia, e
-    cada rejeicao disparava uma realocacao da Missao (ver
-    `missao/orquestrador.py::reagir_a_central_dormente`) que esvaziava a
-    reserva estrategica em poucas dezenas de ciclos. O custo real e linear em
-    quantidade, entao devolver o custo por unidade permite escalar a
-    quantidade pedida para caber no saldo disponivel em vez de so desistir da
-    jazida inteira.
-    """
+    # Aproxima o custo real de `mundo/api/extracao.py::iniciar_extracao`.
     fracao_restante = _fracao_restante(contexto, jazida)
     fator_de_escassez = 1.0 if fracao_restante <= 0.0 else fracao_restante**-EXPOENTE_DE_ESCASSEZ
     fator_de_desgaste = 1.0 + max(0.0, unidade["desgaste"]) * SENSIBILIDADE_AO_DESGASTE
@@ -102,12 +64,6 @@ def _custo_por_unidade(contexto: dict, jazida: dict, unidade: dict, modo: str, p
 
 
 def passo(cliente: Any, estado: dict, eventos: list[dict], contexto: dict) -> None:
-    # Nao ha necessidade de lembrar unidades ocupadas entre ciclos: o estado
-    # real de "/extracao/mineradoras" ja reflete no ciclo seguinte qualquer
-    # comando processado (sucesso ou nao). Guardar isso localmente e o que
-    # travava a central pra sempre quando um comando era rejeitado como
-    # operacao_invalida (nenhum evento de conclusao chega pra liberar a
-    # unidade "ocupada" que nunca foi de fato ocupada pelo motor).
     for evento in eventos:
         if evento["tipo"] in ("extracao_concluida", "extracao_interrompida"):
             cliente.chamar(
@@ -142,12 +98,7 @@ def passo(cliente: Any, estado: dict, eventos: list[dict], contexto: dict) -> No
         custo_por_unidade = _custo_por_unidade(
             contexto, jazida, unidade, parametros["modo"], parametros["perfil_de_escavacao"]
         )
-        # Em vez de desistir da jazida inteira quando a quantidade cheia nao
-        # cabe no saldo, reduz a quantidade ao maximo afordavel — o custo e
-        # linear em quantidade, entao um pedido menor sempre cabe se sobrar
-        # qualquer saldo utilizavel. Isso evita deixar uma unidade descansada
-        # ociosa so porque a jazida mais valiosa disponivel ficou cara demais
-        # para a capacidade cheia.
+        # Reduz a quantidade ao maximo afordavel em vez de desistir da jazida.
         orcamento_disponivel = saldo - MARGEM_DE_SEGURANCA
         if custo_por_unidade > 0 and quantidade * custo_por_unidade > orcamento_disponivel:
             quantidade = orcamento_disponivel / custo_por_unidade

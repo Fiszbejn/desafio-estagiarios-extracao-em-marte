@@ -1,27 +1,8 @@
 """Orquestrador da Central de Missão.
 
-Compatível com o contrato que o avaliador espera de
-`centrais/avaliacao.py::executar_avaliacao(cliente, limite_de_ciclos)`:
-`cliente` expõe `chamar`, `consultar_estado`, `consultar_eventos`,
-`avancar_ciclo` e `simulacao_encerrada` — sem rede real, sem loop de tempo
-real. Por isso a lógica não fala HTTP diretamente: recebe `cliente` e só usa
-essa interface, funcionando tanto in-process (avaliador) quanto contra um
-servidor real via `ClienteHttpLocal` (uso manual, ver `__main__`).
-
 `passo` é chamado uma vez por ciclo pelo loop único em
-`centrais/avaliacao.py` (junto com o passo das outras quatro centrais),
-nunca mais possuindo seu próprio loop/`avancar_ciclo` fora do modo manual.
-
-Responsabilidades resolvidas até aqui:
-1. Nunca deixar o saldo de energia da própria Missão chegar a zero — ela é
-   a única central irrecuperável do mundo: se dormir, para de alocar
-   energia (inclusive para si mesma) e a simulação trava.
-2. Manter as outras 4 centrais operacionais acima de um piso mínimo de
-   energia, com alvos calibrados pelo custo real de cada uma. Extração é a
-   mais faminta; Armazenagem é a mais barata por operação, mas tem dreno
-   contínuo de manutenção por ocupação.
-3. Reagir a eventos `operacao_invalida` repondo energia da central afetada
-   na hora, mais rápido que esperar o próximo check de limiar.
+`centrais/avaliacao.py`. `executar`/`ClienteHttpLocal` só servem para uso
+manual fora do avaliador.
 """
 
 from __future__ import annotations
@@ -39,11 +20,6 @@ LIMIAR_DE_SEGURANCA_DA_MISSAO = 5.0
 QUANTIDADE_DE_REPOSICAO_DA_MISSAO = 20
 
 PERFIL_DE_ENERGIA_POR_CENTRAL = {
-    # Extração precisa de folga bem maior que as outras: uma única extração
-    # de um mineral raro (custo_extracao=8.0, modo cuidadoso) pode custar
-    # bem mais de 60 de energia sozinha. Um alvo baixo demais força a central
-    # a reduzir a quantidade extraída para caber no saldo, capturando só uma
-    # fração do valor de cada jazida valiosa.
     "extracao": {"limiar_minimo": 10.0, "alvo": 270},
     "transporte": {"limiar_minimo": 10.0, "alvo": 40},
     "pesquisa": {"limiar_minimo": 10.0, "alvo": 35},
@@ -101,15 +77,7 @@ def proteger_energia_da_missao(cliente: Any, energia: dict, pendentes: set[str])
 
 
 def distribuir_energia_operacional(cliente: Any, energia: dict, pendentes: set[str]) -> None:
-    """Mantém as centrais operacionais acima do piso mínimo do seu perfil de custo.
-
-    Uma alocação só é aplicada pelo mundo no ciclo seguinte ao pedido
-    (`POST /missao/alocar-energia`). Reavaliar o limiar todo ciclo sem
-    lembrar o que já foi pedido faz a Missão pedir a mesma reposição várias
-    vezes antes da primeira chegar, estourando a reserva estratégica em
-    poucas dezenas de ciclos — por isso `pendentes` trava uma central por
-    exatamente um ciclo após cada pedido, até o saldo já refletir a resposta.
-    """
+    """Mantém as centrais operacionais acima do piso mínimo do seu perfil de custo."""
     for central, perfil in PERFIL_DE_ENERGIA_POR_CENTRAL.items():
         if central in pendentes:
             continue
@@ -122,17 +90,10 @@ def distribuir_energia_operacional(cliente: Any, energia: dict, pendentes: set[s
 
 
 def reagir_a_central_dormente(cliente: Any, evento: dict, pendentes: set[str]) -> None:
-    """`operacao_invalida` com central dormente/sem saldo é o sinal mais rápido
-    de que uma central precisa de energia — mais rápido que esperar o próximo
-    check de limiar, porque veio da tentativa real de executar um comando.
-
-    `motivo` é `str(erro)` (ver `mundo/motor/motor_de_simulacao.py`). Um
-    `EnergiaInsuficienteError(central)` imprime exatamente o nome da central;
-    "Central X dormente" tambem indica falta de energia. Qualquer outro
-    motivo (capacidade excedida, jazida indisponivel, quantidade invalida...)
-    nao tem nada a ver com energia — reagir a ele aqui so desperdiça reserva
-    em cima de um bug de outra central, sem nunca resolver a causa real.
-    """
+    # `motivo` e `str(erro)`: `EnergiaInsuficienteError(central)` imprime o
+    # nome da central, "Central X dormente" tambem indica falta de energia.
+    # Qualquer outro motivo (capacidade excedida, jazida indisponivel...) nao
+    # e sobre energia e nao deve gastar reserva.
     dados = evento["dados"]
     central = dados.get("central")
     motivo = dados.get("motivo", "")
@@ -154,10 +115,8 @@ def criar_contexto() -> dict:
 def passo(cliente: Any, estado: dict, eventos: list[dict], contexto: dict) -> None:
     energia = estado["energia"]
     pendentes = contexto["pendentes"]
-    # O que ficou pendente no ciclo anterior ja foi aplicado nesse `estado`
-    # (a alocacao entra no tick seguinte ao pedido) — limpar antes de
-    # reavaliar, senao a central fica bloqueada de receber nova reposicao
-    # para sempre depois da primeira vez.
+    # Uma alocacao pedida neste ciclo so e aplicada no proximo; pendentes
+    # evita pedir a mesma reposicao de novo antes dela chegar.
     pendentes.clear()
     proteger_energia_da_missao(cliente, energia, pendentes)
     distribuir_energia_operacional(cliente, energia, pendentes)
@@ -167,11 +126,6 @@ def passo(cliente: Any, estado: dict, eventos: list[dict], contexto: dict) -> No
 
 
 def executar(cliente: Any, limite_de_ciclos: int) -> None:
-    """Ponto de entrada só para rodar esta central sozinha, manualmente.
-
-    No avaliador, `passo` é chamado direto pelo loop único de
-    `centrais/avaliacao.py`, junto com o passo das outras quatro centrais.
-    """
     contexto = criar_contexto()
     desde_ciclo = 0
     for _ in range(limite_de_ciclos):
