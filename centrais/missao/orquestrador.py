@@ -17,11 +17,11 @@ URL_BASE = "http://localhost:8000"
 INTERVALO_DE_VERIFICACAO_SEGUNDOS = 1.0
 
 LIMIAR_DE_SEGURANCA_DA_MISSAO = 5.0
-QUANTIDADE_DE_REPOSICAO_DA_MISSAO = 20
+QUANTIDADE_DE_REPOSICAO_DA_MISSAO = 1
 
 PERFIL_DE_ENERGIA_POR_CENTRAL = {
     "extracao": {"limiar_minimo": 10.0, "alvo": 270},
-    "transporte": {"limiar_minimo": 10.0, "alvo": 40},
+    "transporte": {"limiar_minimo": 10.0, "alvo": 90},
     "pesquisa": {"limiar_minimo": 10.0, "alvo": 35},
     "armazenagem": {"limiar_minimo": 10.0, "alvo": 25},
 }

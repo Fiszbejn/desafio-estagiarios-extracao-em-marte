@@ -20,12 +20,20 @@ def criar_contexto() -> dict:
     return {"quantidade_original_por_jazida": {}}
 
 
+MODO_POR_MINERAL = {
+    "cristal_marciano_raro": "cuidadoso",
+    "gelo_de_agua": "normal",
+    "jarosita": "normal",
+}
+
+
 def _parametros_de_extracao(mineral: str) -> dict:
     # "superficial" sempre: qualidade final e min(100, qualidade_do_modo +
-    # bonus_do_perfil), e "cuidadoso" ja satura em 100, entao o bonus de
-    # perfis mais caros nunca se realiza.
+    # bonus_do_perfil), e "cuidadoso"/"normal" ja saturam perto de 100, entao
+    # o bonus de perfis mais caros nunca se realiza plenamente.
     if e_valioso(mineral):
-        return {"tipo_preferido": "precisa", "modo": "cuidadoso", "perfil_de_escavacao": "superficial"}
+        modo = MODO_POR_MINERAL.get(mineral, "cuidadoso")
+        return {"tipo_preferido": "precisa", "modo": modo, "perfil_de_escavacao": "superficial"}
     return {"tipo_preferido": "leve", "modo": "agressivo", "perfil_de_escavacao": "superficial"}
 
 
