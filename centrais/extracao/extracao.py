@@ -14,17 +14,15 @@ FATOR_BASE_DE_ENERGIA = 0.2
 EXPOENTE_DE_ESCASSEZ = 2.0
 SENSIBILIDADE_AO_DESGASTE = 0.65
 MARGEM_DE_SEGURANCA_DO_CUSTO = 1.0
-
-
-def criar_contexto() -> dict:
-    return {"quantidade_original_por_jazida": {}}
-
-
 MODO_POR_MINERAL = {
     "cristal_marciano_raro": "cuidadoso",
     "gelo_de_agua": "normal",
     "jarosita": "normal",
 }
+
+
+def criar_contexto() -> dict:
+    return {"quantidade_original_por_jazida": {}}
 
 
 def _parametros_de_extracao(mineral: str) -> dict:
